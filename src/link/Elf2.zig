@@ -4397,7 +4397,7 @@ fn flushMovedNodeRelocs(
                 // changed, so update the `offset` field of the `ElfN.Rela` entry.
                 reloc.relaSection(elf).relaSetOffset(elf, rela_index, node_vaddr + reloc.offset);
             }
-            reloc.apply(elf);
+            if (elf.ehdrType() != .REL) reloc.apply(elf);
         }
     }
 
