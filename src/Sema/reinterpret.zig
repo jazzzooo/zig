@@ -520,7 +520,11 @@ const PackValueBytes = struct {
             .pointer => {
                 assert(!want_ty.isSlice(zcu));
                 const ptr_addr = std.mem.readVarInt(u64, bytes[0..@intCast(want_ty.abiSize(zcu))], endian);
-                return pt.ptrIntValue(want_ty, ptr_addr);
+                return .fromInterned(try pt.intern(.{ .ptr = .{
+                    .ty = want_ty.toIntern(),
+                    .base_addr = .int,
+                    .byte_offset = ptr_addr,
+                } }));
             },
             .optional => {
                 assert(want_ty.isPtrLikeOptional(zcu));
