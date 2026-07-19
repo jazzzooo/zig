@@ -267,6 +267,8 @@ misaligned_reloc_count: u32,
 illegal_dynamic_type_reloc_count: u32,
 illegal_dynamic_section_reloc_count: u32,
 
+rel_tls_group_pending: bool,
+
 const_prog_node: std.Progress.Node,
 input_prog_node: std.Progress.Node,
 
@@ -837,6 +839,7 @@ const Section = struct {
                     const ent_size = @sizeOf(class.ElfN().Rela);
                     assert(elf.targetLoad(&shdr.entsize) == ent_size);
                     const free_len: u32 = free_len: {
+                        if (elf.ehdrType() == .REL) break :free_len 0;
                         const opt_free_head = rela_shndx.get(elf).rela.free_head;
                         const free_head = opt_free_head.unwrap() orelse break :free_len 0;
                         const relas: []const class.ElfN().Rela = @ptrCast(@alignCast(
@@ -902,13 +905,18 @@ const Section = struct {
             /// or an index into `.dynsym` is contextual.
             raw_sym_index: u32,
             addend: i64,
+            force_append: bool = false,
         }) RelaIndex {
             switch (elf.shdrPtr(rela_shndx)) {
                 inline else => |shdr, class| {
                     assert(elf.targetLoad(&shdr.type) == .RELA);
                     const ent_size = @sizeOf(class.ElfN().Rela);
                     assert(elf.targetLoad(&shdr.entsize) == ent_size);
-                    const new_index: RelaIndex = if (rela_shndx.get(elf).rela.free_head.unwrap()) |free_head| new_index: {
+                    const opt_free_head: RelaIndex.Optional = if (opts.force_append)
+                        .none
+                    else
+                        rela_shndx.get(elf).rela.free_head;
+                    const new_index: RelaIndex = if (opt_free_head.unwrap()) |free_head| new_index: {
                         const relas: []class.ElfN().Rela = @ptrCast(@alignCast(
                             rela_shndx.node(elf).slice(&elf.mf)[0..@intCast(elf.targetLoad(&shdr.size))],
                         ));
@@ -5264,6 +5272,7 @@ fn create(
         .illegal_dynamic_type_reloc_count = 0,
         .illegal_dynamic_section_reloc_count = 0,
 
+        .rel_tls_group_pending = false,
         .const_prog_node = .none,
         .input_prog_node = .none,
     };
@@ -9619,8 +9628,18 @@ fn addRelocAssumeCapacity(
     switch (elf.ehdrType()) {
         .REL => {
             const rela_shndx = elf.getNodeShndx(node).get(elf).rela.shndx;
+            const starts_tls_group = switch (elf.ehdrMachine()) {
+                .X86_64 => switch (@"type".X86_64) {
+                    .TLSGD, .TLSLD, .GOTPC32_TLSDESC => true,
+                    else => false,
+                },
+                else => false,
+            };
+            const force_append = starts_tls_group or elf.rel_tls_group_pending;
+            elf.rel_tls_group_pending = starts_tls_group;
             const rela_index = rela_shndx.relaAddOneAssumeCapacity(elf, .{
                 .type = @"type",
+                .force_append = force_append,
                 // This field needs to equal the offset into the section, which is *not* necessarily
                 // the same thing as our `offset`, which is the offset into `node`. We could compute
                 // the section offset now, but there's no point, because `flushMovedNodeRelocs` will
