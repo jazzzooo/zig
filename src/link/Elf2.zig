@@ -222,6 +222,7 @@ uavs: std.array_hash_map.Auto(InternPool.Index, struct {
     lsi: Symbol.LocalIndex,
     /// The start index of the contiguous sequence of symbol relocations in this UAV.
     first_symbol_reloc: SymbolReloc.Index,
+    generation: u32,
 }),
 lazy: std.EnumArray(link.File.LazySymbol.Kind, struct {
     map: std.array_hash_map.Auto(InternPool.Index, struct {
@@ -7610,11 +7611,18 @@ fn uavMapIndex(
                 .shndx = shndx,
             }),
             .first_symbol_reloc = .none,
+            .generation = zcu.generation,
         };
         elf.const_prog_node.increaseEstimatedTotalItems(1);
         elf.pending_uavs.appendAssumeCapacity(umi);
     } else {
         const node = uav_gop.value_ptr.lsi.index().ptr(elf).node.unwrap().?;
+        if (uav_gop.value_ptr.generation != zcu.generation) {
+            try node.moved(gpa, &elf.mf);
+            elf.const_prog_node.increaseEstimatedTotalItems(1);
+            elf.pending_uavs.appendAssumeCapacity(umi);
+            uav_gop.value_ptr.generation = zcu.generation;
+        }
         const shndx = elf.getNodeShndx(node);
         try shndx.ensureAligned(elf, resolved_align);
         if (resolved_align.order(node.alignment(&elf.mf)).compare(.gt)) {
