@@ -13083,10 +13083,6 @@ fn updateExportInner(elf: *Elf, export_index: Zcu.Export.Index) Error!void {
         .shndx = shndx,
     }) catch |err| switch (err) {
         error.MultipleDefinitions => {
-            // HACK: because we currently don't/can't delete these exports, we would typically
-            // get these errors on every non-initial incremental update. Hack around that by
-            // only emitting this error if the symbol we're conflicting with comes from an input
-            // section (as opposed to the ZCU).
             const parsed = parseVersionedSymbolName(name);
             const conflicting_global = elf.globalByName(.{
                 .name = parsed.name,
@@ -13100,6 +13096,14 @@ fn updateExportInner(elf: *Elf, export_index: Zcu.Export.Index) Error!void {
                     );
                 }
             }
+            try elf.setGlobalSymbolValue(conflicting_global, .{
+                .node = exported_lsi.index().ptr(elf).node,
+                .value = cur_value,
+                .size = cur_size,
+                .type = @"type",
+                .shndx = shndx,
+            });
+            try elf.updateGlobalDynamic(conflicting_global, true);
         },
         error.MultipleDefaultVersions => return elf.base.comp.link_diags.fail(
             "multiple default versions of '{s}'",
