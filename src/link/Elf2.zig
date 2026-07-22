@@ -8361,9 +8361,10 @@ fn updateExportsInner(
     for (export_indices) |export_index| {
         const @"export" = export_index.ptr(zcu);
         const name = @"export".opts.name.toSlice(ip);
+        const symbol_name = try AddGlobalSymbolOptions.Name.string(elf, name);
         _ = elf.addGlobalSymbolAssumeCapacity(.{
             .node = .none,
-            .name = try .string(elf, name),
+            .name = symbol_name,
             .value = value,
             .size = @intCast(size),
             .type = @"type",
@@ -8381,11 +8382,7 @@ fn updateExportsInner(
             .shndx = shndx,
         }) catch |err| switch (err) {
             error.MultipleDefinitions => {
-                // HACK: because we currently don't/can't delete these exports, we would typically
-                // get these errors on every non-initial incremental update. Hack around that by
-                // only emitting this error if the symbol we're conflicting with comes from an input
-                // section (as opposed to the ZCU).
-                const conflicting_global = elf.globalByName(try elf.string(.strtab, name)).?;
+                const conflicting_global = elf.globalByName(symbol_name.strtab).?;
                 const conflicting_node = conflicting_global.symtab_index.ptr(elf).node;
                 if (elf.getNode(conflicting_node) == .input_section) {
                     return elf.base.comp.link_diags.fail(
@@ -8393,6 +8390,13 @@ fn updateExportsInner(
                         .{name},
                     );
                 }
+                elf.setGlobalSymbolValue(symbol_name.strtab, conflicting_global, .{
+                    .node = .none,
+                    .value = value,
+                    .size = size,
+                    .type = @"type",
+                    .shndx = shndx,
+                });
             },
         };
     }
