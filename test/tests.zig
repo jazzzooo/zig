@@ -3361,6 +3361,7 @@ pub fn addIncrementalTests(b: *std.Build, test_step: *Step, test_filters: []cons
     defer dir.close(io);
 
     var it = try dir.walk(b.graph.arena);
+    defer it.deinit(io);
     while (try it.next(io)) |entry| {
         if (std.mem.endsWith(u8, entry.basename, ".swp")) continue;
 

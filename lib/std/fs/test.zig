@@ -1495,7 +1495,7 @@ fn testFilenameLimits(io: Io, iterable_dir: Dir, maxed_filename: []const u8, max
     // High level walk API
     {
         var walker = try iterable_dir.walk(testing.allocator);
-        defer walker.deinit();
+        defer walker.deinit(io);
 
         var file_count: usize = 0;
         var dir_count: usize = 0;
@@ -2013,7 +2013,7 @@ test "walker" {
     }
 
     var walker = try tmp.dir.walk(testing.allocator);
-    defer walker.deinit();
+    defer walker.deinit(io);
 
     var num_walked: usize = 0;
     while (try walker.next(io)) |entry| {
@@ -2075,7 +2075,7 @@ test "selective walker, skip entries that start with ." {
     }
 
     var walker = try tmp.dir.walkSelectively(testing.allocator);
-    defer walker.deinit();
+    defer walker.deinit(io);
 
     var num_walked: usize = 0;
     while (try walker.next(io)) |entry| {
@@ -2105,27 +2105,62 @@ test "selective walker, skip entries that start with ." {
     try expectEqual(expected_paths.kvs.len, num_walked);
 }
 
+const DirCloseCounter = struct {
+    backing: Io,
+    vtable: Io.VTable,
+    count: usize = 0,
+
+    fn init(backing: Io) DirCloseCounter {
+        var vtable = Io.failing.vtable.*;
+        vtable.dirOpenDir = dirOpenDir;
+        vtable.dirClose = dirClose;
+        vtable.dirRead = dirRead;
+        return .{ .backing = backing, .vtable = vtable };
+    }
+
+    fn io(self: *DirCloseCounter) Io {
+        return .{ .userdata = self, .vtable = &self.vtable };
+    }
+
+    fn dirOpenDir(userdata: ?*anyopaque, dir: Dir, sub_path: []const u8, options: Dir.OpenOptions) Dir.OpenError!Dir {
+        const self: *DirCloseCounter = @ptrCast(@alignCast(userdata));
+        return self.backing.vtable.dirOpenDir(self.backing.userdata, dir, sub_path, options);
+    }
+
+    fn dirClose(userdata: ?*anyopaque, dirs: []const Dir) void {
+        const self: *DirCloseCounter = @ptrCast(@alignCast(userdata));
+        self.count += dirs.len;
+        self.backing.vtable.dirClose(self.backing.userdata, dirs);
+    }
+
+    fn dirRead(userdata: ?*anyopaque, reader: *Dir.Reader, entries: []Dir.Entry) Dir.Reader.Error!usize {
+        const self: *DirCloseCounter = @ptrCast(@alignCast(userdata));
+        return self.backing.vtable.dirRead(self.backing.userdata, reader, entries);
+    }
+};
+
 test "walker without fully iterating" {
     const io = testing.io;
 
     var tmp = tmpDir(.{ .iterate = true });
     defer tmp.cleanup();
 
-    var walker = try tmp.dir.walk(testing.allocator);
-    defer walker.deinit();
+    try tmp.dir.createDirPath(io, "a/b");
 
-    // Create 2 directories inside the tmp directory, but then only iterate once before breaking.
-    // This ensures that walker doesn't try to close the initial directory when not fully iterating.
+    var counter: DirCloseCounter = .init(io);
+    {
+        const tracking_io = counter.io();
+        var walker = try tmp.dir.walk(testing.allocator);
+        defer walker.deinit(tracking_io);
 
-    try tmp.dir.createDirPath(io, "a");
-    try tmp.dir.createDirPath(io, "b");
-
-    var num_walked: usize = 0;
-    while (try walker.next(io)) |_| {
-        num_walked += 1;
-        break;
+        const entry_a = (try walker.next(tracking_io)).?;
+        try expectEqualStrings("a", entry_a.basename);
+        const entry_b = (try walker.next(tracking_io)).?;
+        try expectEqualStrings("b", entry_b.basename);
     }
-    try expectEqual(@as(usize, 1), num_walked);
+
+    try expectEqual(@as(usize, 2), counter.count);
+    try tmp.dir.access(io, "a", .{});
 }
 
 test "'.' and '..' in Dir functions" {

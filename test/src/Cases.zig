@@ -336,6 +336,7 @@ fn addFromDirInner(
 ) !void {
     const io = ctx.io;
     var it = try iterable_dir.walk(ctx.arena);
+    defer it.deinit(io);
     var filenames: ArrayList([]const u8) = .empty;
 
     while (try it.next(io)) |entry| {
