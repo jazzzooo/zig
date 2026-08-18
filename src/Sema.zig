@@ -24532,8 +24532,7 @@ fn analyzeMinMax(
                 if (Value.fromInterned(elem.*).isUndef(zcu)) {
                     elem.* = (try pt.undefValue(result_scalar_ty)).toIntern();
                 } else {
-                    // This coercion will always succeed, because `result_scalar_ty` can definitely hold the result.
-                    const coerced_ref = try sema.coerce(block, result_scalar_ty, Air.internedToRef(elem.*), .unneeded);
+                    const coerced_ref = try sema.coerce(block, result_scalar_ty, Air.internedToRef(elem.*), src);
                     elem.* = coerced_ref.toInterned().?;
                 }
             }
@@ -24548,8 +24547,7 @@ fn analyzeMinMax(
             if (Value.fromInterned(elem.*).isUndef(zcu)) {
                 elem.* = (try pt.undefValue(intermediate_scalar_ty)).toIntern();
             } else {
-                // This coercion will always succeed, because `intermediate_scalar_ty` can definitely hold all operands.
-                const coerced_ref = try sema.coerce(block, intermediate_scalar_ty, Air.internedToRef(elem.*), .unneeded);
+                const coerced_ref = try sema.coerce(block, intermediate_scalar_ty, Air.internedToRef(elem.*), src);
                 elem.* = coerced_ref.toInterned().?;
             }
         }
