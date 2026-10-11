@@ -8998,7 +8998,16 @@ pub const NCCS = switch (native_os) {
 };
 
 pub const termios = switch (native_os) {
-    .linux => linux.termios,
+    .linux => if (native_abi.isAndroid() or (native_abi.isMusl() and native_arch.isPowerpc())) linux.termios else extern struct {
+        iflag: tc_iflag_t,
+        oflag: tc_oflag_t,
+        cflag: tc_cflag_t,
+        lflag: tc_lflag_t,
+        line: cc_t,
+        cc: [NCCS]cc_t,
+        ispeed: speed_t,
+        ospeed: speed_t,
+    },
     .driverkit, .ios, .maccatalyst, .macos, .tvos, .visionos, .watchos => extern struct {
         iflag: tc_iflag_t,
         oflag: tc_oflag_t,
