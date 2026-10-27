@@ -2315,11 +2315,20 @@ const SymbolReloc = struct {
         assert(index.get(elf) == reloc);
 
         reloc.deleteOutputRel(elf);
-        if (reloc.bits.type.dependsOnTlsSize(elf)) {
-            assert(elf.tls_size_symbol_relocs.swapRemove(index));
-        }
-        if (reloc.bits.type.dependsOnGotAddress()) {
-            assert(elf.got_relocs.swapRemove(index));
+        if (elf.ehdrType() != .REL) {
+            if (reloc.bits.type.dependsOnTlsSize(elf)) {
+                assert(elf.tls_size_symbol_relocs.swapRemove(index));
+            }
+            if (reloc.bits.type.dependsOnGotAddress()) {
+                assert(elf.got_relocs.swapRemove(index));
+            }
+            switch (reloc.bits.result) {
+                .ok => {},
+                .overflowed => elf.overflowed_reloc_count -= 1,
+                .misaligned => elf.misaligned_reloc_count -= 1,
+                .illegal_dynamic_type => elf.illegal_dynamic_type_reloc_count -= 1,
+                .illegal_dynamic_section => elf.illegal_dynamic_section_reloc_count -= 1,
+            }
         }
 
         switch (reloc.prev) {
@@ -2333,13 +2342,6 @@ const SymbolReloc = struct {
         switch (reloc.next) {
             .none => {},
             else => |next| next.get(elf).prev = reloc.prev,
-        }
-        switch (reloc.bits.result) {
-            .ok => {},
-            .overflowed => elf.overflowed_reloc_count -= 1,
-            .misaligned => elf.misaligned_reloc_count -= 1,
-            .illegal_dynamic_type => elf.illegal_dynamic_type_reloc_count -= 1,
-            .illegal_dynamic_section => elf.illegal_dynamic_section_reloc_count -= 1,
         }
 
         reloc.* = undefined;
