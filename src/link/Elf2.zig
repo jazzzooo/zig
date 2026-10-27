@@ -10929,7 +10929,6 @@ fn flushInner(
 ) Error!void {
     const comp = elf.base.comp;
     const diags = &comp.link_diags;
-    _ = arena;
 
     const flush_prog_node = prog_node.start("ELF Flush", 0);
     defer flush_prog_node.end();
@@ -11005,6 +11004,7 @@ fn flushInner(
     }
 
     elf.flushDynamic();
+    try elf.flushEhFrameRelocs(arena);
 
     const entry_addr: u64 = entry: {
         const entry_gsi = elf.entry_gsi.unwrap() orelse break :entry 0;
@@ -11035,6 +11035,53 @@ fn flushInner(
             error.Canceled => |e| return e,
             else => |e| return diags.fail("dumping link snapshot failed: {t}", .{e}),
         };
+    }
+}
+
+fn flushEhFrameRelocs(elf: *Elf, arena: std.mem.Allocator) std.mem.Allocator.Error!void {
+    if (elf.ehdrType() != .REL or elf.shndx.eh_frame == .UNDEF) return;
+    const rela_shndx = elf.shndx.eh_frame.get(elf).rela.shndx;
+    if (rela_shndx == .UNDEF) return;
+
+    // Some external linkers require unwind relocations in section-offset order.
+    // Update the compiler's references when compacting and sorting them.
+    switch (elf.shdrPtr(rela_shndx)) {
+        inline else => |shdr, class| {
+            const Reloc = struct {
+                rela: class.ElfN().Rela,
+                index: *Section.RelaIndex.Optional,
+
+                fn lessThan(e: *Elf, lhs: @This(), rhs: @This()) bool {
+                    const lhs_offset = e.targetLoad(&lhs.rela.offset);
+                    const rhs_offset = e.targetLoad(&rhs.rela.offset);
+                    if (lhs_offset != rhs_offset) return lhs_offset < rhs_offset;
+                    return @backingInt(lhs.index.*) < @backingInt(rhs.index.*);
+                }
+            };
+            const relas: []class.ElfN().Rela = @ptrCast(@alignCast(
+                rela_shndx.node(elf).slice(&elf.mf)[0..@intCast(elf.targetLoad(&shdr.size))],
+            ));
+            var sorted = try std.ArrayList(Reloc).initCapacity(arena, relas.len);
+            defer sorted.deinit(arena);
+            inline for (.{ elf.symbol_relocs.items, elf.node_relocs.items }) |relocs| {
+                for (relocs) |*reloc| {
+                    const node = reloc.node.unwrap() orelse continue;
+                    if (elf.getNodeShndx(node) != elf.shndx.eh_frame) continue;
+                    const index = reloc.rela_index.unwrap().?;
+                    sorted.appendAssumeCapacity(.{
+                        .rela = relas[@backingInt(index)],
+                        .index = &reloc.rela_index,
+                    });
+                }
+            }
+            std.mem.sortUnstable(Reloc, sorted.items, elf, Reloc.lessThan);
+            for (sorted.items, relas[0..sorted.items.len], 0..) |reloc, *rela, index| {
+                rela.* = reloc.rela;
+                reloc.index.* = @fromBackingInt(@intCast(index));
+            }
+            elf.targetStore(&shdr.size, @intCast(sorted.items.len * @sizeOf(class.ElfN().Rela)));
+            rela_shndx.get(elf).rela.free_head = .none;
+        },
     }
 }
 
